@@ -22,7 +22,7 @@ RUN ~/.cargo/bin/rustup target add ${TARGET}
 COPY . /src
 WORKDIR /src
 
-RUN ~/.cargo/bin/cargo build --release --target=${TARGET}
+RUN ~/.cargo/bin/cargo build --target=${TARGET}
 
 # Build artifacts will be available in /app.
 RUN mkdir /app
@@ -41,7 +41,7 @@ RUN find ${BUILD_DIR} \
                 -exec cp {} /app \;
 				
 # stage 2
-FROM debian:bookworm-20220328-slim
+FROM ubuntu:focal-20220316
 
 RUN apt-get update && apt-get install ca-certificates -y
 COPY --from=0 /app/ /app/
