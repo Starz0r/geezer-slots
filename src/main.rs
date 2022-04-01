@@ -63,6 +63,9 @@ struct AppHandler;
 impl EventHandler for AppHandler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
+            if command.channel_id != serenity::model::id::ChannelId(352458583444684801) {
+                return;
+            }
             let content = match command.data.name.as_str() {
                 "pull" => slot_pull(ctx.http.clone(), *command.user.id.as_u64()).await,
                 "units" => get_units(*command.user.id.as_u64()),
