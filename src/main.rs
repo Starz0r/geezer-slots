@@ -66,6 +66,7 @@ impl EventHandler for AppHandler {
             let content = match command.data.name.as_str() {
                 "pull" => slot_pull(ctx.http.clone(), *command.user.id.as_u64()).await,
                 "units" => get_units(*command.user.id.as_u64()),
+                "tickets" => get_tickets(*command.user.id.as_u64()),
                 _ => unreachable!("unimplemented command"),
             };
 
@@ -111,6 +112,11 @@ impl EventHandler for AppHandler {
                         .name("units")
                         .description("Checks how many units you have.")
                 })
+                .create_application_command(|command| {
+                    command
+                        .name("tickets")
+                        .description("Returns how many tickets you have remaning.")
+                })
         })
         .await;
     }
@@ -126,6 +132,18 @@ fn get_units(user: u64) -> String {
     };
 
     String::from("You have ".to_owned() + &units.to_string() + " Units.")
+}
+
+fn get_tickets(user: u64) -> String {
+    let tickets: u64 = match DB_TICKETS.get(&user.to_string()) {
+        Ok(val) => match val {
+            Some(val) => String::from_utf8_lossy(&val.to_vec()).parse().unwrap(),
+            None => 0, // the user had no account, so nothing
+        },
+        Err(e) => panic!("{}", e),
+    };
+
+    String::from("You have ".to_owned() + &tickets.to_string() + " tickets left to use.")
 }
 
 async fn slot_pull(http: Arc<serenity::http::client::Http>, user: u64) -> String {
