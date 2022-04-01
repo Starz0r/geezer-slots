@@ -3,8 +3,8 @@
 # stage 1
 FROM ubuntu:latest
 
-ENV TARGET=x86_64-unknown-linux-musl
-ENV BUILD_DIR=/src/target/x86_64-unknown-linux-musl/release/
+ENV TARGET=x86_64-unknown-linux-gnu
+ENV BUILD_DIR=/src/target/x86_64-unknown-linux-gnu/release/
 ENV RUSTC_VERSION=1.58.0
 
 RUN apt-get update && \
@@ -41,9 +41,9 @@ RUN find ${BUILD_DIR} \
                 -exec cp {} /app \;
 				
 # stage 2
-FROM alpine:3.12.0
+FROM debian:bookworm-20220328-slim
 
-RUN apk update && apk upgrade && apk add ca-certificates
+RUN apt-get update && apt-get install ca-certificates -y
 COPY --from=0 /app/ /app/
 
 CMD ["/app/geezer-slots"]
