@@ -61,6 +61,7 @@ impl EventHandler for AppHandler {
         if let Interaction::ApplicationCommand(command) = interaction {
             let content = match command.data.name.as_str() {
                 "pull" => slot_pull(ctx.http.clone(), *command.user.id.as_u64()).await,
+                "units" => get_units(*command.user.id.as_u64()),
                 _ => unreachable!("unimplemented command"),
             };
 
@@ -95,14 +96,32 @@ impl EventHandler for AppHandler {
         );
 
         let commands = GuildId::set_application_commands(&guild_id, &ctx.http, |commands| {
-            commands.create_application_command(|command| {
-                command
-                    .name("pull")
-                    .description("Pulls the slot machine lever.")
-            })
+            commands
+                .create_application_command(|command| {
+                    command
+                        .name("pull")
+                        .description("Pulls the slot machine lever.")
+                })
+                .create_application_command(|command| {
+                    command
+                        .name("units")
+                        .description("Checks how many units you have.")
+                })
         })
         .await;
     }
+}
+
+fn get_units(user: u64) -> String {
+    let units: u64 = match DB_ACCOUNT.get(&user.to_string()) {
+        Ok(val) => match val {
+            Some(val) => String::from_utf8_lossy(&val.to_vec()).parse().unwrap(),
+            None => 0, // the user had no account, so nothing
+        },
+        Err(e) => panic!("{}", e),
+    };
+
+    String::from("You have ".to_owned() + &units.to_string() + " Units.")
 }
 
 async fn slot_pull(http: Arc<serenity::http::client::Http>, user: u64) -> String {
@@ -122,6 +141,9 @@ async fn slot_pull(http: Arc<serenity::http::client::Http>, user: u64) -> String
         // if they have no tickets to eat, turn them away
         return String::from("❌Unfortunately, you do not have any tickets to perform pulls.");
     }
+    DB_TICKETS
+        .insert(&user.to_string(), tickets.to_string().as_bytes())
+        .unwrap();
 
     // assemble emojis for message
     let guild_id: _ = env::var("GUILD_ID")
@@ -176,11 +198,7 @@ async fn slot_pull(http: Arc<serenity::http::client::Http>, user: u64) -> String
         Err(e) => panic!("{}", e),
     };
     DB_ACCOUNT
-        .compare_and_swap(
-            &user.to_string(),
-            Some(account.to_be_bytes().to_vec()),
-            Some((account + units).to_be_bytes().to_vec()),
-        )
+        .insert(&user.to_string(), (account + units).to_string().as_bytes())
         .unwrap();
 
     // which row is the winning one
