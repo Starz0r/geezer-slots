@@ -40,6 +40,8 @@ ONBUILD RUN find ${BUILD_DIR} \
                 # Copy the matching files into /app.
                 -exec cp {} /app \;
 				
+ONBUILD RUN echo "The following files will be copied to the runtime image: $(ls /app)"
+				
 # stage 2
 FROM alpine:3.12.0
 
