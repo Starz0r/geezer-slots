@@ -13,8 +13,8 @@ serenity = { version = "0.10.10", default-features = false, features = ["client"
 tracing-subscriber = "0.3.9"
 sled = { version = "0.34.7", features = [ "compression" ] }
 rand = "*"
-tokio = { version = "1.17.0", features = [ "rt-multi-thread", "macros", "time" ] }
-rust-s3 = "0.30.0"
+tokio = { version = "1.17.0", features = [ "rt-multi-thread", "macros", "time", "io-std", "io-util", "fs" ] }
+rust-s3 = { version = "0.30.0", default-features = false, features = [ "sync", "sync-rustls-tls" ] }
 lazy_static = "1.4.0"
 zip = { version = "0.6.0", default-features = false, features = [ "deflate", "time" ] }
 walkdir = "2.3.2"

@@ -1,4 +1,8 @@
-use std::{env, sync::Arc};
+use std::{
+    env,
+    io::{Read, Seek, Write},
+    sync::Arc,
+};
 
 use {
     anyhow::{Error, Result},
@@ -23,14 +27,14 @@ use {
     },
     sled::Db,
     standard_dist::StandardDist,
-    tracing::{debug, error, info, trace},
+    tracing::{debug, error, info},
     tracing_subscriber::FmtSubscriber,
-    walkdir::WalkDir,
+    walkdir::{DirEntry, WalkDir},
 };
 
 lazy_static! {
-    static ref DB_TICKETS: Arc<Db> = Arc::new(sled::open("tickets").unwrap());
-    static ref DB_ACCOUNT: Arc<Db> = Arc::new(sled::open("account").unwrap());
+    static ref DB_TICKETS: Arc<Db> = Arc::new(sled::open("db/tickets").unwrap());
+    static ref DB_ACCOUNT: Arc<Db> = Arc::new(sled::open("db/account").unwrap());
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, StandardDist)]
@@ -323,15 +327,153 @@ async fn slot_pull(http: Arc<serenity::http::client::Http>, user: u64) -> String
         .build()
 }
 
+// adapted from https://github.com/zip-rs/zip/blob/172f60fb9ae98450631e4a99a08bbadb7e3aa9da/examples/write_dir.rs
+pub fn zip_dir<T>(
+    dir: &mut dyn Iterator<Item = DirEntry>,
+    prefix: &str,
+    writer: T,
+    method: zip::CompressionMethod,
+) -> zip::result::ZipResult<()>
+where
+    T: Write + Seek,
+{
+    let mut zip = zip::ZipWriter::new(writer);
+    let options = zip::write::FileOptions::default()
+        .compression_method(method)
+        .unix_permissions(0o775);
+
+    let mut buffer = Vec::new();
+    for entry in dir {
+        let path = entry.path();
+        let name = path.strip_prefix(std::path::Path::new(prefix)).unwrap();
+
+        // Write file or directory explicitly
+        // Some unzip tools unzip files with directory paths correctly, some do not!
+        if path.is_file() {
+            zip.start_file_from_path(name, options)?;
+            let mut f = std::fs::File::open(path)?;
+
+            f.read_to_end(&mut buffer)?;
+            zip.write_all(&*buffer)?;
+            buffer.clear();
+        } else if !name.as_os_str().is_empty() {
+            // Only if not root! Avoids path spec / warning
+            // and mapname conversion failed error on unzip
+            zip.add_directory_from_path(name, options)?;
+        }
+    }
+
+    zip.finish()?;
+    Ok(())
+}
+
+pub fn backup_task() -> Result<String, Error> {
+    let mut t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs()
+        .to_string();
+    t.push_str("_backup.zip");
+    let backup_path = std::path::Path::new(t.as_str());
+    let f = std::fs::File::create(&backup_path)?;
+
+    /*let walk = WalkDir::new("db");
+    let mut dir = walk.into_iter().filter_map(|e| e.ok());
+    let d = &mut dir;
+    zip_dir(d, "db", f, zip::CompressionMethod::Deflated)?;*/
+
+    let mut zip = zip::ZipWriter::new(f);
+    zip.add_directory("db/", Default::default())?;
+
+    let zip_opts = zip::write::FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+
+    zip.start_file("db/tickets.txt", zip_opts)?;
+    let tixs = std::fs::File::open("tickets.txt")?;
+    let mut reader = std::io::BufReader::new(tixs);
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+    zip.write_all(&buffer)?;
+
+    zip.start_file("db/account.txt", zip_opts)?;
+    let accs = std::fs::File::open("account.txt")?;
+    let mut reader = std::io::BufReader::new(accs);
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+    zip.write_all(&buffer)?;
+
+    zip.finish()?;
+
+    Ok(t)
+}
+
+pub fn export_tickets_db_tree() -> Result<(), Error> {
+    let mut export = DB_TICKETS.export();
+    let mut out = std::fs::File::create("tickets.txt")?;
+    for (identifier, db_name, kv_iter) in export.drain(0..) {
+        out.write_all(&identifier)?;
+        out.write_all(&String::from("\n").as_bytes())?;
+        out.write_all(&db_name)?;
+        out.write_all(&String::from("\n").as_bytes())?;
+
+        for kv in kv_iter {
+            let mut counter = 0;
+            for data in kv.into_iter() {
+                out.write_all(&data)?;
+                if counter == 0 {
+                    out.write_all(&String::from(",").as_bytes())?;
+                    counter += 1;
+                    continue;
+                }
+                counter = 0;
+                out.write_all(&String::from("\n").as_bytes())?;
+            }
+        }
+    }
+    out.sync_data()?;
+
+    Ok(())
+}
+
+pub fn export_account_db_tree() -> Result<(), Error> {
+    let mut export = DB_ACCOUNT.export();
+    let mut out = std::fs::File::create("account.txt")?;
+    for (identifier, db_name, kv_iter) in export.drain(0..) {
+        out.write_all(&identifier)?;
+        out.write_all(&String::from("\n").as_bytes())?;
+        out.write_all(&db_name)?;
+        out.write_all(&String::from("\n").as_bytes())?;
+
+        for kv in kv_iter {
+            let mut counter = 0;
+            for data in kv.into_iter() {
+                out.write_all(&data)?;
+                if counter == 0 {
+                    out.write_all(&String::from(",").as_bytes())?;
+                    counter += 1;
+                    continue;
+                }
+                counter = 0;
+                out.write_all(&String::from("\n").as_bytes())?;
+            }
+        }
+    }
+    out.sync_data()?;
+
+    Ok(())
+}
+
 #[tokio::main]
 pub async fn main() -> Result<(), Error> {
     // set tracing log subscriber
     let logger = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::DEBUG)
         .finish();
 
     tracing::subscriber::set_global_default(logger)
         .expect("setting default logging subscriber failed");
+
+    // get environment variables
 
     let tkn = env::var("DISCORD_TOKEN").or_else(|e| {
         error!("discord token was not set in the environment: {e}");
@@ -349,6 +491,28 @@ pub async fn main() -> Result<(), Error> {
             return Err(e);
         })?;
 
+    let s3_access_key = env::var("S3_ACCESS_KEY").or_else(|e| {
+        error!("s3 access key was not set in the environment: {e}");
+        return Err(e);
+    })?;
+    let s3_secret_key = env::var("S3_SECRET_KEY").or_else(|e| {
+        error!("s3 secret key was not set in the environment: {e}");
+        return Err(e);
+    })?;
+    let s3_region = env::var("S3_REGION").or_else(|e| {
+        error!("s3 region was not set in the environment: {e}");
+        return Err(e);
+    })?;
+    let s3_endpoint = env::var("S3_ENDPOINT").or_else(|e| {
+        error!("s3 region was not set in the environment: {e}");
+        return Err(e);
+    })?;
+
+    let s3_bucket_name = env::var("S3_BUCKET_NAME").or_else(|e| {
+        error!("s3 bucket name was not set in the environment: {e}");
+        return Err(e);
+    })?;
+
     // build client
     let mut discord = Client::builder(tkn)
         .event_handler(AppHandler)
@@ -358,6 +522,46 @@ pub async fn main() -> Result<(), Error> {
             error!("discord client could not be created: {e}");
             return Err(e);
         })?;
+
+    // spawn a backup task
+    let s3_creds =
+        s3::creds::Credentials::new(Some(&s3_access_key), Some(&s3_secret_key), None, None, None)?;
+    let s3_region_custom = s3::Region::Custom {
+        region: s3_region,
+        endpoint: s3_endpoint,
+    };
+    let s3_bucket = s3::bucket::Bucket::new(&s3_bucket_name, s3_region_custom, s3_creds)?;
+    std::thread::spawn(move || -> Result<(), Error> {
+        loop {
+            // sleep for 4 hours
+            std::thread::sleep(std::time::Duration::from_secs_f64(60.0 * 60.0 * 4.0));
+
+            info!("backup: running task!");
+
+            // export database trees
+            debug!("backup: exporting database trees");
+            export_tickets_db_tree()?;
+            export_account_db_tree()?;
+
+            // compress to zip
+            debug!("backup: compressing");
+            let path = backup_task()?;
+
+            // upload to s3
+            let f = std::fs::File::open(&path)?;
+            let mut reader = std::io::BufReader::new(f);
+            let mut buffer = Vec::new();
+            reader.read_to_end(&mut buffer)?;
+            s3_bucket.put_object(&path, &buffer)?;
+
+            // clean up
+            let _ = std::fs::remove_file("tickets.txt");
+            let _ = std::fs::remove_file("account.txt");
+            let _ = std::fs::remove_file(path);
+
+            info!("backup: task finished!");
+        }
+    });
 
     // start it
     if let Err(e) = discord.start().await {
