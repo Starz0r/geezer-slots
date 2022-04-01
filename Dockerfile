@@ -41,7 +41,9 @@ ONBUILD RUN find ${BUILD_DIR} \
                 -exec cp {} /app \;
 				
 # stage 2
-FROM alpine:latest
+FROM alpine:3.12.0
+
+RUN apk update && apk upgrade && apk add ca-certificates
 COPY --from=0 /app/ /app/
 
 CMD ["/app/geezer-slots"]
